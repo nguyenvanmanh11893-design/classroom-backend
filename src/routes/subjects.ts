@@ -1,6 +1,6 @@
 import { and, eq, ilike, or, sql, getTableColumns, desc } from 'drizzle-orm'
 import express from 'express'
-import { departments, subjects } from '../db/schema'
+import { departments, subjects } from '../db/schema/auth'
 import { db } from '../db'
 const router = express.Router()
 // Logic to get all subjects, pageination, and filtering can be implemented here
