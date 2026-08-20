@@ -15,6 +15,13 @@
       "when": 1785491347096,
       "tag": "0001_unusual_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787235965058,
+      "tag": "0002_groovy_bug",
+      "breakpoints": true
     }
   ]
 }
