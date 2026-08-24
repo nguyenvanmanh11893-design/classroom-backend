@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import subjectsRoutes from './routes/subjects'
+import securityMiddleware from './middleware/security'
 
 
 const app = express()
@@ -12,6 +13,8 @@ app.use(cors({
     credentials: true
 }))
 app.use(express.json())
+
+app.use(securityMiddleware) 
 
 app.use('/api/subjects', subjectsRoutes)
 
