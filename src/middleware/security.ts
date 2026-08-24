@@ -1,13 +1,13 @@
 import type { Request, Response, NextFunction } from "express"
 import aj from '../config/arcjet'
-import { ArcjetRequest, slidingWindow } from "@arcjet/node"
+import { ArcjetNodeRequest, slidingWindow } from "@arcjet/node"
 const securityMiddleware = async (req: Request, res: Response, next: NextFunction) => {
     if (process.env.NODE_ENV === "test") return next()
     
     try {
         const role: RateLimitRole = req.user?.role ?? 'guest'
 
-        let limit: Number
+        let limit: number
         let message: string
 
         switch (role) {
@@ -34,7 +34,7 @@ const securityMiddleware = async (req: Request, res: Response, next: NextFunctio
             })
         )
 
-        const arcjetRequest: ArcjetRequest = {
+        const arcjetRequest: ArcjetNodeRequest = {
             headers: req.headers,
             method: req.method,
             url: req.originalUrl ?? req.url,
