@@ -1,6 +1,6 @@
 import arcjet, { detectBot, shield, slidingWindow } from "@arcjet/node";
 
-if (!process.env.ARCJET_KEY && process.env.ARCJET_ENV!=='test') {
+if (!process.env.ARCJET_KEY && process.env.NODE_ENV !== 'test') {
   throw new Error("ARCJET_KEY environment variable is required")
 }
 
