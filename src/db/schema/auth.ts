@@ -36,6 +36,7 @@ export const account = pgTable("account", {
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
+    issuer: text("issuer").notNull().default("local:credential"),
     userId: text("user_id").notNull().references(() => user.id, { onDelete: 'cascade' }),
     accessToken: text("access_token"),
     refreshToken: text("refresh_token"),
@@ -79,6 +80,24 @@ export const accountRelations = relations(account, ({ one }) => ({
         references: [user.id],
     }),
 }));
+//thử nghiệm
+export const departments = pgTable("department", {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    code: text("code").notNull().unique(),
+    ...timestamps
+});
+
+export const subjects = pgTable("subject", {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull().unique(),
+    departmentId: text("department_id")
+        .notNull()
+        .references(() => departments.id, { onDelete: "cascade" }),
+    ...timestamps
+});
+
 
 export type User = typeof user.$inferSelect;
 export type NewUser = typeof user.$inferInsert;
@@ -91,3 +110,9 @@ export type NewAccount = typeof account.$inferInsert;
 
 export type Verification = typeof verification.$inferSelect;
 export type NewVerification = typeof verification.$inferInsert;
+// thử nghiệm
+export type Department = typeof departments.$inferSelect;
+export type NewDepartment = typeof departments.$inferInsert;
+
+export type Subject = typeof subjects.$inferSelect;
+export type NewSubject = typeof subjects.$inferInsert;
