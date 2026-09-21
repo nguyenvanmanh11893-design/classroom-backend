@@ -14,8 +14,21 @@ import { toNodeHandler } from 'better-auth/node'
 const app = express()
 const PORT =8000 
 if (!process.env.FRONTEND_URL) throw new Error('FRONTEND_URL is not defined in the environment variables')
+
+const allowedOrigins = process.env.FRONTEND_URL
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL,
+    origin: (requestOrigin, callback) => {
+        if (!requestOrigin || allowedOrigins.includes(requestOrigin.replace(/\/+$/, ''))) {
+            callback(null, true)
+            return
+        }
+
+        callback(new Error(`Origin ${requestOrigin} is not allowed by CORS`))
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }))
