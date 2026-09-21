@@ -4,6 +4,8 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import subjectsRoutes from './routes/subjects.js'
+import usersRoutes from './routes/users.js'
+import classesRoutes from './routes/classes.js'
 import securityMiddleware from './middleware/security.js'
 import { auth } from './lib/auth.js'
 import { toNodeHandler } from 'better-auth/node'
@@ -25,6 +27,8 @@ app.use(express.json())
 app.use(securityMiddleware) 
 
 app.use('/api/subjects', subjectsRoutes)
+app.use('/api/users', usersRoutes)
+app.use('/api/classes', classesRoutes)
 
 app.get('/', (req, res) => {
     res.send('Hello, World!')
@@ -33,4 +37,3 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`)
 })
-
