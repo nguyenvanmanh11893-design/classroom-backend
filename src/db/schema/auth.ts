@@ -2,6 +2,7 @@ import { pgTable, text, timestamp, boolean, pgEnum, index } from "drizzle-orm/pg
 import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", ["student", "teacher", "admin"]);
+export const preferredLocaleEnum = pgEnum("preferred_locale", ["en", "vi"]);
 
 const timestamps = {
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -15,6 +16,8 @@ export const user = pgTable("user", {
     emailVerified: boolean("email_verified").notNull(),
     image: text("image"),
     role: roleEnum("role").default("student").notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    preferredLocale: preferredLocaleEnum("preferred_locale").default("en").notNull(),
     imageCldPubId: text("image_cld_pub_id"),
     ...timestamps
 });

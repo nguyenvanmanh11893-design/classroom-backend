@@ -25,6 +25,12 @@ export const auth = betterAuth({
             role: {
                 type: "string", required: true, defaultValue: "student", input: false,
             },
+            isActive: {
+                type: "boolean", required: true, defaultValue: true, input: false,
+            },
+            preferredLocale: {
+                type: "string", required: true, defaultValue: "en", input: false,
+            },
             imageCldPubId: {
                 type: "string", required: false, input: true,
             },

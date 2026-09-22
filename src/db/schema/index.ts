@@ -1,6 +1,6 @@
 export * from './app.js'
 export {
-    roleEnum, user, session, account, verification,
+    roleEnum, preferredLocaleEnum, user, session, account, verification,
     userRelations, sessionRelations, accountRelations,
 } from './auth.js'
 export type {

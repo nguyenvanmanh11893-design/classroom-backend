@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express"
 import aj from '../config/arcjet.js'
 import { ArcjetNodeRequest, slidingWindow } from "@arcjet/node"
+import { ApiError } from '../lib/api-error.js'
 const securityMiddleware = async (req: Request, res: Response, next: NextFunction) => {
     if (process.env.NODE_ENV === "test") return next()
     
@@ -44,21 +45,21 @@ const securityMiddleware = async (req: Request, res: Response, next: NextFunctio
         const decision = await client.protect(arcjetRequest)
 
         if(decision.isDenied() && decision.reason.isBot()) {
-            return res.status(403).json({ error: 'Forbidden', message: 'Automated request are not allowed' })
+            return next(new ApiError(403, 'BOT_BLOCKED', 'Automated requests are not allowed'))
         }
 
         if(decision.isDenied() && decision.reason.isShield()) {
-            return res.status(403).json({ error: 'Forbidden', message: 'Request blocked by security policy' })
+            return next(new ApiError(403, 'SECURITY_POLICY_BLOCKED', 'Request blocked by security policy'))
         }
 
         if(decision.isDenied() && decision.reason.isRateLimit()) {
-            return res.status(429).json({ error: 'Too Many Requests', message})
+            return next(new ApiError(429, 'RATE_LIMITED', message))
         }
         
         next()
     } catch (e) {
         console.error('Arcjet middleware error', e)
-        res.status(500).json({ error: 'Internal Error', message: 'Something went wrong' })
+        next(new ApiError(500, 'SECURITY_SERVICE_ERROR', 'Security service failed'))
     }
 }
 
