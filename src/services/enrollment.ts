@@ -54,7 +54,7 @@ export async function unenroll(input: Omit<EnrollInput, 'source' | 'inviteCode'>
     await tx.execute(sql`SELECT id FROM "user" WHERE id=${input.studentId} FOR UPDATE`);
     const result = await tx.execute(sql`UPDATE enrollments SET status='cancelled', cancelled_at=now() WHERE class_id=${input.classId} AND student_id=${input.studentId} AND status='active' RETURNING student_id`);
     if (!result.rows.length) return { status: 'already_cancelled' as const };
-    await tx.execute(sql`INSERT INTO enrollment_events (student_id,class_id,type,actor_id,source) VALUES (${input.studentId},${input.classId},'cancelled',${input.actorId},'student')`);
+    await tx.execute(sql`INSERT INTO enrollment_events (student_id,class_id,type,actor_id,source) VALUES (${input.studentId},${input.classId},'cancelled',${input.actorId},${input.actorId === input.studentId ? 'student' : 'admin'})`);
     await writeAuditEvent(tx, { actorId: input.actorId, entityType: 'enrollment', entityId: `${input.classId}:${input.studentId}`, action: 'enrollment.cancelled', requestId: input.requestId, metadata: { classId: input.classId, studentId: input.studentId } });
     return { status: 'cancelled' as const };
   });

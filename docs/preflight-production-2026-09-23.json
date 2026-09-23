@@ -1,0 +1,38 @@
+{
+  "target": "DATABASE_URL",
+  "readOnly": true,
+  "latestKnownMigration": "0003_messy_vulture",
+  "pending": [
+    "0004_foundation_auth_audit",
+    "0005_past_weapon_omega",
+    "0006_subject_class_restrict",
+    "0007_class_schedule_lifecycle",
+    "0008_enrollment_invites"
+  ],
+  "migrationHashMismatches": [],
+  "lineEndingOnly": [
+    "0000_tidy_skullbuster",
+    "0001_unusual_nehzno",
+    "0002_groovy_bug"
+  ],
+  "blockers": [],
+  "checks": {
+    "invalidCapacity": [],
+    "overCapacity": [],
+    "invalidTeachers": [],
+    "legacyStatus": [
+      {
+        "status": "active",
+        "count": 1
+      }
+    ],
+    "legacySchedulesToReview": [],
+    "classInventory": [
+      {
+        "id": 1,
+        "name": "DS001",
+        "status": "active"
+      }
+    ]
+  }
+}

@@ -26,6 +26,7 @@ function ownershipCondition(currentUser: NonNullable<Express.Request['user']>) {
 const classSelection = {
     id: classes.id, name: classes.name, description: classes.description, status: classes.status,
     semesterId: classes.semesterId, teacherId: classes.teacherId, subjectId: classes.subjectId,
+    activeEnrollmentCount: sql<number>`(SELECT count(*)::int FROM enrollments e WHERE e.class_id=classes.id AND e.status='active')`,
     capacity: classes.capacity, bannerUrl: classes.bannerUrl, bannerCldPubId: classes.bannerCldPubId,
     lifecycleStatus: classes.lifecycleStatus, archivedAt: classes.archivedAt, createdAt: classes.createdAt, updatedAt: classes.updatedAt,
     subject: { id: subjects.id, name: subjects.name, code: subjects.code, description: subjects.description },
@@ -59,6 +60,7 @@ router.get('/', async (req, res) => {
     if (req.query.subject) filters.push(ilike(subjects.name, `%${String(req.query.subject).slice(0, 200).replace(/[%_]/g, '\\$&')}%`));
     if (req.query.teacher) filters.push(ilike(user.name, `%${String(req.query.teacher).slice(0, 200).replace(/[%_]/g, '\\$&')}%`));
     if (req.query.semester) filters.push(eq(classes.semesterId, z.coerce.number().int().positive().parse(req.query.semester)));
+    if (req.query.department) filters.push(eq(subjects.departmentId, z.coerce.number().int().positive().parse(req.query.department)));
     if (req.query.status) filters.push(eq(classes.lifecycleStatus, lifecycle.parse(req.query.status)));
     const owned = ownershipCondition(req.user!);
     if (owned) filters.push(owned);
@@ -122,6 +124,10 @@ router.patch('/:id', requireRole('admin'), async (req, res) => {
     const next = { teacherId: patch.teacherId ?? current.teacherId, semesterId: patch.semesterId ?? current.semesterId, schedules: patch.schedules ?? currentSchedules, lifecycleStatus: patch.lifecycleStatus ?? current.lifecycleStatus };
     if (!next.semesterId) throw new ApiError(400, 'SEMESTER_REQUIRED', 'Class must have a semester');
     assertTransition(current.lifecycleStatus, next.lifecycleStatus);
+    if (current.lifecycleStatus === 'closed' && next.lifecycleStatus === 'open') {
+      const window = await tx.execute(sql`SELECT 1 FROM semesters WHERE id=${next.semesterId} AND (now() AT TIME ZONE 'Asia/Bangkok')::date <= ends_on::date`);
+      if (!window.rows.length) throw new ApiError(409, 'REGISTRATION_CLOSED', 'Semester has ended');
+    }
     await assertTeacher(tx, next.teacherId); await assertClassSchedule(tx, classId, next.teacherId, next.semesterId, next.schedules, !current.archivedAt && !patch.archive && !['cancelled', 'completed'].includes(next.lifecycleStatus));
     if (patch.capacity !== undefined) { const [count] = await tx.select({ count: sql<number>`count(*)` }).from(enrollments).where(and(eq(enrollments.classId, classId), eq(enrollments.status, 'active'))); if (Number(count?.count ?? 0) > patch.capacity) throw new ApiError(409, 'CAPACITY_BELOW_ACTIVE_ENROLLMENT', 'Capacity cannot be below active enrollment', { activeEnrollment: Number(count?.count ?? 0) }); }
     const values = { ...patch, archivedAt: patch.archive ? new Date() : current.archivedAt, archivedBy: patch.archive ? req.user!.id : current.archivedBy };

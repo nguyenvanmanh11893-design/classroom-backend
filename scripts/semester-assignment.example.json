@@ -1,0 +1,12 @@
+{
+  "semester": {
+    "code": "REPLACE_WITH_SEMESTER_CODE",
+    "name": "REPLACE_WITH_SEMESTER_NAME",
+    "startsOn": "YYYY-MM-DD",
+    "endsOn": "YYYY-MM-DD",
+    "registrationStartsOn": "YYYY-MM-DD",
+    "registrationEndsOn": "YYYY-MM-DD",
+    "status": "active"
+  },
+  "classIds": [0]
+}

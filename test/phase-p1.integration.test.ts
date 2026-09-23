@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import { readFile } from 'node:fs/promises';
 
 test('P1 acceptance on isolated PostgreSQL', async t => {
   assert.equal(process.env.NODE_ENV, 'test', 'Run with NODE_ENV=test');
@@ -51,6 +52,29 @@ test('P1 acceptance on isolated PostgreSQL', async t => {
       const id = (await pool.query("INSERT INTO semesters(code,name,starts_on,ends_on,registration_starts_on,registration_ends_on,status) VALUES ($1,$1,'2000-01-01','2100-12-31','2000-01-01','2100-12-31','active') RETURNING id", [code])).rows[0].id;
       if (!semesterId) semesterId = id; else semester2 = id;
     }
+    await t.test('migration 0004–0008 rehearsal preserves legacy JSON including non-arrays', async () => {
+      const schema = `rehearsal_${randomUUID().replaceAll('-', '')}`;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`CREATE SCHEMA "${schema}"`);
+        await client.query(`SET LOCAL search_path TO "${schema}"`);
+        const journal = JSON.parse(await readFile(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'));
+        for (const entry of journal.entries) {
+          if (entry.idx === 4) {
+            await client.query("INSERT INTO departments(code,name) VALUES ('legacy','legacy')");
+            await client.query("INSERT INTO subjects(code,name,department_id) VALUES ('legacy','legacy',1)");
+            await client.query(`INSERT INTO "user"(id,name,email,email_verified,role) VALUES ('legacy','legacy','legacy@example.test',true,'teacher')`);
+            await client.query(`INSERT INTO classes(subject_id,teacher_id,invite_code,name,schedules) VALUES (1,'legacy','a','legacy','[{"dayOfWeek":1,"startTime":"09:00","endTime":"10:00"}]'),(1,'legacy','b','unparsed','{"day":"Monday"}')`);
+          }
+          const source = (await readFile(new URL(`../drizzle/${entry.tag}.sql`, import.meta.url), 'utf8')).replaceAll('"public".', `"${schema}".`);
+          for (const statement of source.split('--> statement-breakpoint')) if (statement.trim()) await client.query(statement);
+        }
+        assert.equal((await client.query('SELECT count(*)::int n FROM class_schedules')).rows[0].n, 1);
+        assert.equal((await client.query('SELECT lifecycle_status FROM classes WHERE id=1')).rows[0].lifecycle_status, 'open');
+        assert.deepEqual((await client.query('SELECT schedules FROM classes WHERE id=2')).rows[0].schedules, { day: 'Monday' });
+      } finally { await client.query('ROLLBACK'); client.release(); }
+    });
     await t.test('valid schedule SQL, touching endpoints and overlapping semesters', async () => {
       await create(schedule(1));
       await create(schedule(1, '10:00', '11:00'));
@@ -94,6 +118,20 @@ test('P1 acceptance on isolated PostgreSQL', async t => {
       assert.equal((await join(a, students[1], invite.body.data.code)).status, 201);
       assert.equal((await join(a, students[2], invite.body.data.code)).body.error.code, 'INVITE_EXHAUSTED');
     });
+    await t.test('join by code, rotate remaining uses, roster access and cancellation', async () => {
+      const id = await create([]);
+      const issued = await api(`/classes/${id}/invites`, 'POST', { maxUses: 2 });
+      assert.equal(issued.status, 201);
+      const first = await api('/enrollments/join', 'POST', { code: issued.body.data.code }, students[8]);
+      assert.equal(first.status, 201); assert.equal(first.body.data.classId, id);
+      const rotated = await api(`/classes/${id}/invites/${issued.body.data.id}/rotate`, 'POST', {});
+      assert.equal(rotated.status, 201); assert.equal(rotated.body.data.maxUses, 1);
+      assert.equal((await api('/enrollments/join', 'POST', { code: issued.body.data.code }, students[9])).status, 409);
+      assert.equal((await api('/enrollments/join', 'POST', { code: rotated.body.data.code }, students[9])).status, 201);
+      assert.equal((await api(`/classes/${id}/invites`, 'GET', undefined, students[8])).status, 403);
+      assert.equal((await api(`/classes/${id}/roster?page=0`)).status, 400);
+      assert.equal((await api(`/classes/${id}/enrollments/${students[8]}`, 'DELETE', undefined, students[8])).status, 200);
+    });
     await t.test('last seat cannot be taken twice; reduction below active count rejected', async () => {
       const id = await create([], { capacity: 1 });
       const results = await Promise.all([join(id, students[3]), join(id, students[4])]);
@@ -113,6 +151,34 @@ test('P1 acceptance on isolated PostgreSQL', async t => {
       assert.deepEqual(buckets, { available: 1, full: 1, near: 1 });
       assert.equal(result.body.data.summary.activeEnrollments, 18);
       assert.equal(result.body.data.summary.utilization, 18 / 30);
+    });
+    await t.test('concurrent enrollment and schedule edit cannot introduce a student overlap', async () => {
+      const a = await create(schedule(7));
+      const b = await create([], { teacherId: teacher2 });
+      assert.equal((await join(a, students[9])).status, 201);
+      const results = await Promise.all([api(`/classes/${b}`, 'PATCH', { schedules: schedule(7) }), join(b, students[9])]);
+      assert.equal(results.filter(result => result.status < 300).length, 1, JSON.stringify(results));
+      assert.equal(results.filter(result => result.status === 409 && result.body.error.code === 'STUDENT_SCHEDULE_CONFLICT').length, 1);
+    });
+    await t.test('semester assignment previews without writes and applies idempotently', async () => {
+      const { assignmentInput, assignSemester, previewSemesterAssignment } = await import('../src/services/semester-assignment.js');
+      const id = await create([]);
+      await pool.query('UPDATE classes SET semester_id=NULL WHERE id=$1', [id]);
+      const config = assignmentInput.parse({ semester: { code: tag, name: tag, startsOn: '2000-01-01', endsOn: '2100-12-31', registrationStartsOn: '2000-01-01', registrationEndsOn: '2100-12-31', status: 'active' }, classIds: [id] });
+      const preview = await previewSemesterAssignment(config);
+      assert.equal(preview.classes[0]?.semesterId, null);
+      assert.equal((await pool.query('SELECT semester_id FROM classes WHERE id=$1', [id])).rows[0].semester_id, null);
+      await assignSemester(config);
+      assert.equal((await pool.query('SELECT semester_id FROM classes WHERE id=$1', [id])).rows[0].semester_id, semesterId);
+      assert.deepEqual((await assignSemester(config)).assignedClassIds, []);
+      await assert.rejects(assignSemester({ ...config, semester: { ...config.semester, code: `${tag}-other` } }), /another semester/);
+      assert.equal((await pool.query('SELECT count(*)::int n FROM semesters WHERE code=$1', [`${tag}-other`])).rows[0].n, 0);
+      await pool.query("DELETE FROM audit_logs WHERE entity_type='class' AND entity_id=$1 AND action='class.semester_assigned'", [String(id)]);
+      const conflicting = await create([]);
+      await pool.query('UPDATE classes SET semester_id=NULL WHERE id=$1', [conflicting]);
+      await pool.query("INSERT INTO class_schedules(class_id,day_of_week,start_time,end_time) VALUES ($1,1,'09:00','10:00')", [conflicting]);
+      await assert.rejects(assignSemester({ ...config, classIds: [conflicting] }), /overlapping class schedule/);
+      assert.equal((await pool.query('SELECT semester_id FROM classes WHERE id=$1', [conflicting])).rows[0].semester_id, null);
     });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));

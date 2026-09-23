@@ -6,6 +6,9 @@ import { user } from '../db/schema/auth.js';
 import { db } from '../db/index.js';
 import { ApiError } from '../lib/api-error.js';
 import { requireRole } from '../middleware/auth.js';
+import { serializable } from '../services/transaction.js';
+import { parseListQuery, pagination } from '../lib/list-query.js';
+import { writeAuditEvent } from '../services/audit.js';
 import { enroll, hashCode, newInviteCode, unenroll } from '../services/enrollment.js';
 
 const router = Router();
@@ -15,10 +18,11 @@ const inviteInput = z.object({ expiresAt: z.coerce.date().optional(), maxUses: z
 async function manageClass(classId: number, actor: Express.Request['user']) {
   const [row] = await db.select({ teacherId: classes.teacherId }).from(classes).where(eq(classes.id, classId));
   if (!row) throw new ApiError(404, 'CLASS_NOT_FOUND', 'Class was not found');
-  if (actor!.role !== 'admin' && row.teacherId !== actor!.id) throw new ApiError(403, 'FORBIDDEN', 'You do not have permission for this action');
+  if (actor!.role !== 'admin' && (actor!.role !== 'teacher' || row.teacherId !== actor!.id)) throw new ApiError(403, 'FORBIDDEN', 'You do not have permission for this action');
 }
 function inviteRateLimit(actorId: string) {
   const now = Date.now(), current = inviteAttempts.get(actorId);
+  for (const [key, value] of inviteAttempts) if (value.reset < now) inviteAttempts.delete(key);
   if (!current || current.reset < now) { inviteAttempts.set(actorId, { count: 1, reset: now + 60_000 }); return; }
   if (++current.count > 10) throw new ApiError(429, 'INVITE_RATE_LIMITED', 'Too many invite attempts');
 }
@@ -43,7 +47,7 @@ router.get('/classes/:id/roster', async (req, res) => {
   const classId = z.coerce.number().int().positive().parse(req.params.id);
   if (req.user!.role === 'student') { const [mine] = await db.select({ status: enrollments.status }).from(enrollments).where(and(eq(enrollments.classId, classId), eq(enrollments.studentId, req.user!.id))); return res.json({ data: mine ? [{ studentId: req.user!.id, status: mine.status }] : [] }); }
   await manageClass(classId, req.user);
-  const page = Math.max(1, Number(req.query.page ?? 1)); const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 20))); const search = String(req.query.search ?? '').slice(0, 200);
+  const list = parseListQuery(req.query, ['name'], 'name'); const page = list.page; const limit = list.pageSize; const search = list.search ?? '';
   const where = search ? and(eq(enrollments.classId, classId), ilike(user.name, `%${search.replace(/[%_]/g, '\\$&')}%`)) : eq(enrollments.classId, classId);
   const [count, rows] = await Promise.all([db.select({ count: sql<number>`count(*)` }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).where(where), db.select({ studentId: user.id, name: user.name, status: enrollments.status, enrolledAt: enrollments.enrolledAt }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).where(where).orderBy(asc(user.name), asc(user.id)).limit(limit).offset((page - 1) * limit)]);
   res.json({ data: rows, pagination: { page, limit, total: Number(count[0]?.count ?? 0), totalPages: Math.ceil(Number(count[0]?.count ?? 0) / limit) } });
@@ -54,6 +58,45 @@ router.post('/classes/:id/invites', async (req, res) => {
   const code = newInviteCode(); const [invite] = await db.insert(classInvites).values({ classId, codeHash: hashCode(code), expiresAt: input.expiresAt, maxUses: input.maxUses, createdBy: req.user!.id }).returning({ id: classInvites.id, expiresAt: classInvites.expiresAt, maxUses: classInvites.maxUses });
   res.status(201).json({ data: { ...invite, code } });
 });
-router.post('/classes/:id/invites/:inviteId/revoke', async (req, res) => { const classId = z.coerce.number().int().positive().parse(req.params.id); await manageClass(classId, req.user); await db.update(classInvites).set({ revokedAt: new Date() }).where(and(eq(classInvites.id, req.params.inviteId), eq(classInvites.classId, classId))); res.json({ data: { revoked: true } }); });
-router.post('/classes/:id/invites/:inviteId/rotate', async (req, res) => { const classId = z.coerce.number().int().positive().parse(req.params.id); await manageClass(classId, req.user); await db.update(classInvites).set({ revokedAt: new Date() }).where(and(eq(classInvites.id, req.params.inviteId), eq(classInvites.classId, classId))); const code = newInviteCode(); const [invite] = await db.insert(classInvites).values({ classId, codeHash: hashCode(code), createdBy: req.user!.id }).returning({ id: classInvites.id }); res.status(201).json({ data: { ...invite, code } }); });
+router.get('/classes/:id/invites', async (req, res) => {
+  const classId = z.coerce.number().int().positive().parse(req.params.id); await manageClass(classId, req.user);
+  const q = parseListQuery(req.query, ['createdAt']);
+  const where = eq(classInvites.classId, classId);
+  const [count, data] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(classInvites).where(where),
+    db.select({ id: classInvites.id, expiresAt: classInvites.expiresAt, revokedAt: classInvites.revokedAt, maxUses: classInvites.maxUses, usedCount: classInvites.usedCount, createdAt: classInvites.createdAt }).from(classInvites).where(where).orderBy(asc(classInvites.createdAt), asc(classInvites.id)).limit(q.pageSize).offset(q.offset),
+  ]);
+  res.json({ data, pagination: pagination(Number(count[0]?.count ?? 0), q) });
+});
+for (const action of ['revoke', 'rotate'] as const) router.post(`/classes/:id/invites/:inviteId/${action}`, async (req, res) => {
+  const classId = z.coerce.number().int().positive().parse(req.params.id);
+  const inviteId = z.uuid().parse(req.params.inviteId);
+  await manageClass(classId, req.user);
+  const result = await serializable(async tx => {
+    const [current] = await tx.select().from(classInvites).where(and(eq(classInvites.id, inviteId), eq(classInvites.classId, classId))).for('update');
+    if (!current) throw new ApiError(404, 'INVITE_INVALID', 'Invite was not found');
+    if (action === 'rotate' && current.revokedAt) throw new ApiError(409, 'INVITE_INVALID', 'Invite is already revoked');
+    await tx.update(classInvites).set({ revokedAt: current.revokedAt ?? new Date() }).where(eq(classInvites.id, inviteId));
+    let data: object = { revoked: true };
+    if (action === 'rotate') {
+      if (current.expiresAt && current.expiresAt <= new Date()) throw new ApiError(409, 'INVITE_EXPIRED', 'Invite has expired');
+      const remaining = current.maxUses === null ? null : current.maxUses - current.usedCount;
+      if (remaining !== null && remaining <= 0) throw new ApiError(409, 'INVITE_EXHAUSTED', 'No remaining uses');
+      const code = newInviteCode();
+      const [created] = await tx.insert(classInvites).values({ classId, codeHash: hashCode(code), createdBy: req.user!.id, expiresAt: current.expiresAt, maxUses: remaining }).returning({ id: classInvites.id, expiresAt: classInvites.expiresAt, maxUses: classInvites.maxUses });
+      data = { ...created, code };
+    }
+    await writeAuditEvent(tx, { actorId: req.user!.id, entityType: 'class_invite', entityId: inviteId, action: `invite.${action}`, requestId: req.requestId, metadata: { classId } });
+    return data;
+  });
+  res.status(action === 'rotate' ? 201 : 200).json({ data: result });
+});
+router.post('/enrollments/join', requireRole('student'), async (req, res) => {
+  const { code } = z.object({ code: z.string().trim().min(20).max(200) }).strict().parse(req.body);
+  inviteRateLimit(req.user!.id);
+  const [invite] = await db.select({ classId: classInvites.classId }).from(classInvites).where(eq(classInvites.codeHash, hashCode(code)));
+  if (!invite) throw new ApiError(409, 'INVITE_INVALID', 'Invite code is invalid');
+  const result = await enroll({ classId: invite.classId, studentId: req.user!.id, actorId: req.user!.id, source: 'invite', inviteCode: code, requestId: req.requestId });
+  res.status(201).json({ data: { ...result, classId: invite.classId } });
+});
 export default router;

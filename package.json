@@ -12,7 +12,11 @@
     "test:crud": "tsx --test test/crud.regression.test.ts",
     "test:typecheck": "tsc -p tsconfig.test.json",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "test:p1": "tsx --test test/phase-p1.integration.test.ts",
+    "db:preflight": "node scripts/db-preflight.mjs",
+    "db:assign-semester": "tsx scripts/assign-semester.ts",
+    "seed:local": "tsx scripts/seed-local.ts"
   },
   "keywords": [],
   "author": "",

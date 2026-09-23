@@ -36,7 +36,7 @@ test('R1/R4: migrated test DB rejects subject deletion with a class and duplicat
     await client.query('insert into "user" (id,name,email,email_verified,role,is_active,preferred_locale) values ($1,$2,$3,true,\'teacher\',true,\'en\')', [teacherId, teacherId, `${teacherId}@example.test`]);
     await client.query('insert into classes (subject_id,teacher_id,invite_code,name) values ($1,$2,$3,$4)', [subject.rows[0]!.id, teacherId, `invite-${suffix}`, 'Regression class']);
     await client.query('savepoint before_constraint_check');
-    await assert.rejects(client.query('delete from subjects where id=$1', [subject.rows[0]!.id]), { code: '23503' });
+    await assert.rejects(client.query('delete from subjects where id=$1', [subject.rows[0]!.id]), (error: unknown) => !!error && typeof error === 'object' && 'code' in error && ['23503', '23001'].includes(String(error.code)));
     await client.query('rollback to savepoint before_constraint_check');
     await assert.rejects(client.query('insert into departments (code,name) values ($1,$2)', [departmentCode, 'duplicate']), { code: '23505' });
   } finally { await client.query('rollback'); client.release(); }

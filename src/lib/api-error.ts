@@ -42,7 +42,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     apiError = new ApiError(400, 'INVALID_JSON', 'Request body is not valid JSON');
   } else if (isPostgresConstraint(error, '23505')) {
     apiError = new ApiError(409, 'UNIQUE_CONSTRAINT', 'A record with this value already exists');
-  } else if (isPostgresConstraint(error, '23503')) {
+  } else if (isPostgresConstraint(error, '23503') || isPostgresConstraint(error, '23001')) {
     apiError = new ApiError(409, 'REFERENCE_IN_USE', 'The record is still referenced');
   } else {
     console.error(`[${req.requestId}] Unhandled API error`, error);

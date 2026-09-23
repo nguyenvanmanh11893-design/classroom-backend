@@ -31,6 +31,7 @@ router.get('/', async (req, res) => {
     const filters = [];
     if (list.search) filters.push(or(ilike(user.name, `%${list.search}%`), ilike(user.email, `%${list.search}%`)));
     if (roleResult.data) filters.push(eq(user.role, roleResult.data));
+    if (req.query.status) filters.push(eq(user.isActive, z.enum(['active','inactive']).parse(req.query.status) === 'active'));
     const where = filters.length ? and(...filters) : undefined;
     const sortColumns = { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt } as const;
     const sort = list.order === 'asc' ? asc : desc;

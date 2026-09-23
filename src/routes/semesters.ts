@@ -4,7 +4,7 @@ import { z } from 'zod'; import { db } from '../db/index.js'; import { semesters
 import { serializable } from '../services/transaction.js';
 import { assertClassSchedule } from '../services/class-schedule.js';
 import { classes, classSchedules } from '../db/schema/app.js';
-const router=express.Router(); router.use(requireRole('admin'));
+const router=express.Router();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).transform((value, ctx) => {
   const [year, month, day] = value.split('-').map(Number);
   const parsed = new Date(Date.UTC(year!, month! - 1, day!));
@@ -17,7 +17,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).transform((value, ctx) => {
 const semesterFields=z.object({code:z.string().trim().min(1).max(50),name:z.string().trim().min(1).max(255),startsOn:date,endsOn:date,registrationStartsOn:date,registrationEndsOn:date,status:z.enum(['draft','active','archived']).optional()}).strict();
 export const semesterInput=semesterFields.superRefine((v,c)=>{if(v.startsOn>v.endsOn)c.addIssue({code:'custom',path:['endsOn'],message:'End must follow start'});if(v.registrationStartsOn>v.registrationEndsOn)c.addIssue({code:'custom',path:['registrationEndsOn'],message:'Registration end must follow start'});if(v.registrationStartsOn<v.startsOn||v.registrationEndsOn>v.endsOn)c.addIssue({code:'custom',path:['registrationStartsOn'],message:'Registration must be within semester'});}); export const semesterPatchInput=semesterFields.partial(); const id=(v:unknown)=>z.coerce.number().int().positive().parse(v);
 router.get('/',async(req,res)=>{const q=parseListQuery(req.query,['id','code','name','startsOn','endsOn','createdAt']);const from=req.query.from?date.parse(req.query.from):undefined,to=req.query.to?date.parse(req.query.to):undefined;const f=[];if(q.search)f.push(ilike(semesters.name,`%${q.search}%`));if(from)f.push(gte(semesters.endsOn,from));if(to)f.push(lte(semesters.startsOn,to));const where=f.length?and(...f):undefined;const cols={id:semesters.id,code:semesters.code,name:semesters.name,startsOn:semesters.startsOn,endsOn:semesters.endsOn,createdAt:semesters.createdAt}as const,o=q.order==='asc'?asc:desc;const [c,data]=await Promise.all([db.select({count:sql<number>`count(*)`}).from(semesters).where(where),db.select().from(semesters).where(where).orderBy(o(cols[q.sort as keyof typeof cols]),asc(semesters.id)).limit(q.pageSize).offset(q.offset)]);res.json({data,pagination:pagination(Number(c[0]?.count??0),q)});});
-router.get('/:id',async(req,res)=>{const [r]=await db.select().from(semesters).where(eq(semesters.id,id(req.params.id)));if(!r)throw new ApiError(404,'SEMESTER_NOT_FOUND','Semester was not found');res.json({data:r});});router.post('/',async(req,res)=>{const data=semesterInput.parse(req.body);const [existing]=await db.select({id:semesters.id}).from(semesters).where(eq(semesters.code,data.code));if(existing)throw new ApiError(409,'SEMESTER_CODE_IN_USE','Semester code is already in use');const [r]=await db.insert(semesters).values(data).returning();res.status(201).json({data:r});});router.patch('/:id', async (req, res) => {
+router.get('/:id',async(req,res)=>{const [r]=await db.select().from(semesters).where(eq(semesters.id,id(req.params.id)));if(!r)throw new ApiError(404,'SEMESTER_NOT_FOUND','Semester was not found');res.json({data:r});});router.post('/',requireRole('admin'),async(req,res)=>{const data=semesterInput.parse(req.body);const [existing]=await db.select({id:semesters.id}).from(semesters).where(eq(semesters.code,data.code));if(existing)throw new ApiError(409,'SEMESTER_CODE_IN_USE','Semester code is already in use');const [r]=await db.insert(semesters).values(data).returning();res.status(201).json({data:r});});router.patch('/:id',requireRole('admin'), async (req, res) => {
   const semesterId = id(req.params.id);
   const changed = semesterPatchInput.parse(req.body);
   if (!Object.keys(changed).length) throw new ApiError(400, 'VALIDATION_ERROR', 'At least one editable field is required');
@@ -38,4 +38,4 @@ router.get('/:id',async(req,res)=>{const [r]=await db.select().from(semesters).w
     return result;
   });
   res.json({ data: row });
-});router.delete('/:id',async(req,res)=>{const [r]=await db.delete(semesters).where(eq(semesters.id,id(req.params.id))).returning({id:semesters.id});if(!r)throw new ApiError(404,'SEMESTER_NOT_FOUND','Semester was not found');res.status(204).end();});export default router;
+});router.delete('/:id',requireRole('admin'),async(req,res)=>{const [r]=await db.delete(semesters).where(eq(semesters.id,id(req.params.id))).returning({id:semesters.id});if(!r)throw new ApiError(404,'SEMESTER_NOT_FOUND','Semester was not found');res.status(204).end();});export default router;
