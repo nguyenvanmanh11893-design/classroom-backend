@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { and, asc, eq, ilike, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { classes, classInvites, enrollments } from '../db/schema/app.js';
+import { classes, classInvites, enrollments, studentProfiles } from '../db/schema/app.js';
 import { user } from '../db/schema/auth.js';
 import { db } from '../db/index.js';
 import { ApiError } from '../lib/api-error.js';
@@ -13,7 +13,7 @@ import { enroll, hashCode, newInviteCode, unenroll } from '../services/enrollmen
 
 const router = Router();
 const inviteAttempts = new Map<string, { count: number; reset: number }>();
-const enrollmentInput = z.object({ studentId: z.string().min(1).max(200), inviteCode: z.string().min(20).max(200).optional() }).strict();
+const enrollmentInput = z.object({ studentId: z.string().min(1).max(200), inviteCode: z.string().min(20).max(200).optional(), registrationPeriodId: z.number().int().positive().optional() }).strict();
 const inviteInput = z.object({ expiresAt: z.coerce.date().optional(), maxUses: z.coerce.number().int().positive().max(100000).optional() }).strict();
 async function manageClass(classId: number, actor: Express.Request['user']) {
   const [row] = await db.select({ teacherId: classes.teacherId }).from(classes).where(eq(classes.id, classId));
@@ -32,7 +32,7 @@ router.post('/classes/:id/enrollments', async (req, res) => {
   if (req.user!.role === 'teacher') throw new ApiError(403, 'FORBIDDEN', 'You do not have permission for this action');
   if (req.user!.role === 'student' && body.studentId !== req.user!.id) throw new ApiError(403, 'ENROLLMENT_SELF_ONLY', 'Students may only enroll themselves');
   if (body.inviteCode) inviteRateLimit(req.user!.id);
-  const data = await enroll({ classId, studentId: body.studentId, actorId: req.user!.id, source: body.inviteCode ? 'invite' : req.user!.role === 'admin' ? 'admin' : 'student', ...(body.inviteCode ? { inviteCode: body.inviteCode } : {}), requestId: req.requestId });
+  const data = await enroll({ classId, studentId: body.studentId, actorId: req.user!.id, source: body.inviteCode ? 'invite' : req.user!.role === 'admin' ? 'admin' : 'student', ...(body.inviteCode ? { inviteCode: body.inviteCode } : {}), ...(body.registrationPeriodId ? { registrationPeriodId: body.registrationPeriodId } : {}), requestId: req.requestId });
   res.status(201).json({ data });
 });
 
@@ -49,7 +49,7 @@ router.get('/classes/:id/roster', async (req, res) => {
   await manageClass(classId, req.user);
   const list = parseListQuery(req.query, ['name'], 'name'); const page = list.page; const limit = list.pageSize; const search = list.search ?? '';
   const where = search ? and(eq(enrollments.classId, classId), ilike(user.name, `%${search.replace(/[%_]/g, '\\$&')}%`)) : eq(enrollments.classId, classId);
-  const [count, rows] = await Promise.all([db.select({ count: sql<number>`count(*)` }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).where(where), db.select({ studentId: user.id, name: user.name, status: enrollments.status, enrolledAt: enrollments.enrolledAt }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).where(where).orderBy(asc(user.name), asc(user.id)).limit(limit).offset((page - 1) * limit)]);
+  const [count, rows] = await Promise.all([db.select({ count: sql<number>`count(*)` }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).where(where), db.select({ studentId: user.id, studentCode: studentProfiles.studentCode, name: user.name, status: enrollments.status, enrolledAt: enrollments.enrolledAt }).from(enrollments).innerJoin(user, eq(user.id, enrollments.studentId)).leftJoin(studentProfiles, eq(studentProfiles.userId, user.id)).where(where).orderBy(asc(user.name), asc(user.id)).limit(limit).offset((page - 1) * limit)]);
   res.json({ data: rows, pagination: { page, limit, total: Number(count[0]?.count ?? 0), totalPages: Math.ceil(Number(count[0]?.count ?? 0) / limit) } });
 });
 
@@ -92,11 +92,11 @@ for (const action of ['revoke', 'rotate'] as const) router.post(`/classes/:id/in
   res.status(action === 'rotate' ? 201 : 200).json({ data: result });
 });
 router.post('/enrollments/join', requireRole('student'), async (req, res) => {
-  const { code } = z.object({ code: z.string().trim().min(20).max(200) }).strict().parse(req.body);
+  const { code, registrationPeriodId } = z.object({ code: z.string().trim().min(20).max(200), registrationPeriodId: z.number().int().positive().optional() }).strict().parse(req.body);
   inviteRateLimit(req.user!.id);
   const [invite] = await db.select({ classId: classInvites.classId }).from(classInvites).where(eq(classInvites.codeHash, hashCode(code)));
   if (!invite) throw new ApiError(409, 'INVITE_INVALID', 'Invite code is invalid');
-  const result = await enroll({ classId: invite.classId, studentId: req.user!.id, actorId: req.user!.id, source: 'invite', inviteCode: code, requestId: req.requestId });
+  const result = await enroll({ classId: invite.classId, studentId: req.user!.id, actorId: req.user!.id, source: 'invite', inviteCode: code, ...(registrationPeriodId ? { registrationPeriodId } : {}), requestId: req.requestId });
   res.status(201).json({ data: { ...result, classId: invite.classId } });
 });
 export default router;

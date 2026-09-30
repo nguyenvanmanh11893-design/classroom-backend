@@ -5,7 +5,7 @@ import { db } from '../db/index.js';
 import { classes, classSchedules, semesters } from '../db/schema/app.js';
 import { semesterInput } from '../routes/semesters.js';
 import { serializable } from './transaction.js';
-import { assertClassSchedule } from './class-schedule.js';
+import { assertStoredClassSchedule } from './class-schedule.js';
 import { writeAuditEvent } from './audit.js';
 
 export const assignmentInput = z.object({ semester: semesterInput, classIds: z.array(z.number().int().positive()).min(1) }).strict();
@@ -21,7 +21,7 @@ export async function assignSemester(config: Assignment) {
   return serializable(async tx => {
       let [semester] = await tx.select().from(semesters).where(eq(semesters.code, config.semester.code)).for('update');
       if (semester) {
-        for (const key of ['startsOn', 'endsOn', 'registrationStartsOn', 'registrationEndsOn'] as const) {
+        for (const key of ['startsOn', 'endsOn'] as const) {
           if (semester[key].toISOString().slice(0, 10) !== config.semester[key].toISOString().slice(0, 10)) throw new Error('Existing semester dates differ. Use its actual dates or edit it through the application first.');
         }
       } else [semester] = await tx.insert(semesters).values(config.semester).returning();
@@ -34,7 +34,7 @@ export async function assignSemester(config: Assignment) {
         const schedules = await tx.select().from(classSchedules).where(eq(classSchedules.classId, row.id));
         // Raw legacy schedules remain intact; incomplete migration needs human review.
         if (!Array.isArray(row.schedules) || row.schedules.length > schedules.length) throw new Error(`Class ${row.id} has unconverted legacy schedules. Review and save its schedule in the class edit form first.`);
-        await assertClassSchedule(tx, row.id, row.teacherId, semester.id, schedules, !row.archivedAt && !['cancelled', 'completed'].includes(row.lifecycleStatus));
+        await assertStoredClassSchedule(tx, row.id, semester.id);
       }
       for (const row of changed) await writeAuditEvent(tx, { entityType: 'class', entityId: String(row.id), action: 'class.semester_assigned', requestId: randomUUID(), metadata: { semesterId: semester.id, source: 'assign-semester-script' } });
       return { semesterId: semester.id, assignedClassIds: changed.map(row => row.id) };

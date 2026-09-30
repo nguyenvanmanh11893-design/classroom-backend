@@ -12,7 +12,7 @@ if (process.env.DATABASE_URL) {
 const { db, pool } = await import('../src/db/index.js');
 const { auth } = await import('../src/lib/auth.js');
 const { user } = await import('../src/db/schema/auth.js');
-const { departments, subjects, semesters } = await import('../src/db/schema/app.js');
+const { departments, subjects, semesters, teacherProfiles, studentProfiles } = await import('../src/db/schema/app.js');
 try {
   const suffix = randomBytes(4).toString('hex');
   const accounts = [];
@@ -26,7 +26,9 @@ try {
   const [department] = await db.insert(departments).values({ name: `Local QA ${suffix}`, code: `QA-${suffix}` }).returning();
   const [subject] = await db.insert(subjects).values({ name: `Local subject ${suffix}`, code: `QA-${suffix}`, departmentId: department!.id }).returning();
   const year = new Date().getUTCFullYear();
-  const [semester] = await db.insert(semesters).values({ code: `LOCAL-${suffix}`, name: `Local semester ${year}`, startsOn: new Date(`${year}-01-01`), endsOn: new Date(`${year}-12-31`), registrationStartsOn: new Date(`${year}-01-01`), registrationEndsOn: new Date(`${year}-12-31`), status: 'active' }).returning();
+  const [semester] = await db.insert(semesters).values({ code: `LOCAL-${suffix}`, name: `Local semester ${year}`, startsOn: new Date(`${year}-01-01`), endsOn: new Date(`${year}-12-31`), status: 'active' }).returning();
+  await db.insert(teacherProfiles).values({ userId: accounts.find(a => a.role === 'teacher')!.id, teacherCode: `QA-T-${suffix}`, departmentId: department!.id, employmentStatus: 'active' });
+  await db.insert(studentProfiles).values({ userId: accounts.find(a => a.role === 'student')!.id, studentCode: `QA-S-${suffix}`, departmentId: department!.id, admissionYear: year, academicStatus: 'studying' });
   await writeFile('local-test-accounts.json', JSON.stringify({ environment: 'TEST_DATABASE_URL only', accounts, departmentId: department!.id, subjectId: subject!.id, semesterId: semester!.id }, null, 2));
   console.log('Test accounts and catalog created. Credentials: local-test-accounts.json (gitignored).');
 } finally { await pool.end(); }

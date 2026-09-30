@@ -19,7 +19,7 @@ test('R2: semester PATCH accepts partial form fields; merged date rules remain e
 });
 
 test('R3: semester date validation rejects impossible dates and accepts leap day', () => {
-  const base = { code: 'S', name: 'S', endsOn: '2028-03-01', registrationStartsOn: '2028-02-29', registrationEndsOn: '2028-02-29' };
+  const base = { code: 'S', name: 'S', endsOn: '2028-03-01' };
   assert.equal(semesterInput.safeParse({ ...base, startsOn: '2026-02-30' }).success, false);
   assert.equal(semesterInput.safeParse({ ...base, startsOn: '2028-02-29' }).success, true);
 });

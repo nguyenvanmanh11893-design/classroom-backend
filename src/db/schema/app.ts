@@ -9,7 +9,7 @@ import {
     varchar,
     index,
     primaryKey
-    ,uuid, boolean
+    ,uuid, boolean, date
 } from "drizzle-orm/pg-core";
 import {relations} from "drizzle-orm";
 import {user} from "./auth.js";
@@ -48,8 +48,9 @@ export const semesters = pgTable('semesters', {
     name: varchar('name', { length: 255 }).notNull(),
     startsOn: timestamp('starts_on', { withTimezone: false }).notNull(),
     endsOn: timestamp('ends_on', { withTimezone: false }).notNull(),
-    registrationStartsOn: timestamp('registration_starts_on', { withTimezone: false }).notNull(),
-    registrationEndsOn: timestamp('registration_ends_on', { withTimezone: false }).notNull(),
+    // Legacy values retained for migration review; registration_periods governs enrollment.
+    registrationStartsOn: timestamp('registration_starts_on', { withTimezone: false }),
+    registrationEndsOn: timestamp('registration_ends_on', { withTimezone: false }),
     status: semesterStatusEnum('status').default('draft').notNull(),
     ...timestamps,
 });
@@ -59,6 +60,9 @@ export const classes = pgTable('classes', {
     // A subject with classes is a business constraint, never a cascading delete.
     subjectId: integer('subject_id').notNull().references(() => subjects.id, { onDelete: 'restrict' }),
     semesterId: integer('semester_id').references(() => semesters.id, { onDelete: 'restrict' }),
+    startsOn: date('starts_on'),
+    endsOn: date('ends_on'),
+    scheduleReviewRequired: boolean('schedule_review_required').default(true).notNull(),
     teacherId: text('teacher_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
     inviteCode: text('invite_code').notNull().unique(),
     name: varchar('name', {length: 255}).notNull(),
@@ -84,6 +88,7 @@ export const classSchedules = pgTable('class_schedules', {
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     classId: integer('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
     dayOfWeek: integer('day_of_week').notNull(),
+    timeSlotId: integer('time_slot_id').references(() => timeSlots.id, { onDelete: 'restrict' }),
     startTime: varchar('start_time', { length: 5 }).notNull(),
     endTime: varchar('end_time', { length: 5 }).notNull(),
 }, (table) => [index('class_schedules_class_id_idx').on(table.classId)]);
@@ -92,6 +97,7 @@ export const enrollments = pgTable('enrollments', {
     studentId: text('student_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
     classId: integer('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
     status: enrollmentStatusEnum('status').default('active').notNull(),
+    registrationPeriodId: integer('registration_period_id').references(() => registrationPeriods.id, { onDelete: 'restrict' }),
     enrolledAt: timestamp('enrolled_at', { withTimezone: true }),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     timeSource: varchar('time_source', { length: 30 }).default('legacy_unknown').notNull(),
@@ -109,6 +115,7 @@ export const enrollmentEvents = pgTable('enrollment_events', {
     type: enrollmentEventTypeEnum('type').notNull(),
     actorId: text('actor_id').references(() => user.id, { onDelete: 'restrict' }),
     source: varchar('source', { length: 30 }).notNull(),
+    registrationPeriodId: integer('registration_period_id').references(() => registrationPeriods.id, { onDelete: 'restrict' }),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [index('enrollment_events_class_occurred_idx').on(table.classId, table.occurredAt)]);
 
@@ -138,6 +145,67 @@ export const auditLogs = pgTable('audit_logs', {
     index('audit_logs_entity_idx').on(table.entityType, table.entityId),
     index('audit_logs_occurred_at_idx').on(table.occurredAt),
 ]);
+
+export const studentProfiles = pgTable('student_profiles', {
+    userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'restrict' }),
+    studentCode: varchar('student_code', { length: 50 }).notNull().unique(),
+    departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+    major: varchar('major', { length: 200 }),
+    admissionYear: integer('admission_year').notNull(),
+    dateOfBirth: date('date_of_birth'),
+    phone: varchar('phone', { length: 30 }),
+    academicStatus: varchar('academic_status', { length: 30 }).default('studying').notNull(),
+    ...timestamps,
+});
+
+export const teacherProfiles = pgTable('teacher_profiles', {
+    userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'restrict' }),
+    teacherCode: varchar('teacher_code', { length: 50 }).notNull().unique(),
+    departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+    academicDegree: varchar('academic_degree', { length: 100 }),
+    specialization: varchar('specialization', { length: 200 }),
+    phone: varchar('phone', { length: 30 }),
+    employmentStatus: varchar('employment_status', { length: 30 }).default('active').notNull(),
+    ...timestamps,
+});
+
+export const timeSlots = pgTable('time_slots', {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    name: varchar('name', { length: 100 }).notNull().unique(),
+    startTime: varchar('start_time', { length: 5 }).notNull(),
+    endTime: varchar('end_time', { length: 5 }).notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    ...timestamps,
+});
+
+export const classSessions = pgTable('class_sessions', {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    classId: integer('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+    sessionDate: date('session_date').notNull(),
+    timeSlotId: integer('time_slot_id').notNull().references(() => timeSlots.id, { onDelete: 'restrict' }),
+    startTime: varchar('start_time', { length: 5 }).notNull(),
+    endTime: varchar('end_time', { length: 5 }).notNull(),
+    status: varchar('status', { length: 20 }).default('scheduled').notNull(),
+    source: varchar('source', { length: 20 }).default('recurring').notNull(),
+    note: text('note'),
+    ...timestamps,
+}, table => [index('class_sessions_class_date_idx').on(table.classId, table.sessionDate)]);
+
+export const registrationPeriods = pgTable('registration_periods', {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    semesterId: integer('semester_id').notNull().references(() => semesters.id, { onDelete: 'restrict' }),
+    name: varchar('name', { length: 200 }).notNull(),
+    opensAt: timestamp('opens_at', { withTimezone: true }).notNull(),
+    closesAt: timestamp('closes_at', { withTimezone: true }).notNull(),
+    cancellationDeadline: timestamp('cancellation_deadline', { withTimezone: true }).notNull(),
+    status: varchar('status', { length: 20 }).default('draft').notNull(),
+    ...timestamps,
+});
+
+export const registrationPeriodClasses = pgTable('registration_period_classes', {
+    periodId: integer('period_id').notNull().references(() => registrationPeriods.id, { onDelete: 'cascade' }),
+    classId: integer('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+}, table => [primaryKey({ columns: [table.periodId, table.classId] })]);
 
 export const departmentRelations = relations(departments, ({ many }) => ({ subjects: many(subjects) }));
 

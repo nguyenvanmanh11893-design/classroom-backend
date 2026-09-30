@@ -25,6 +25,10 @@ export async function updateUserAccess(
     }).from(user).where(eq(user.id, targetId)).for('update');
 
     if (!target) throw new ApiError(404, 'USER_NOT_FOUND', 'User was not found', { userId: targetId });
+    if (input.role && input.role !== target.role) {
+      const profile = await tx.execute(sql`SELECT 1 FROM student_profiles WHERE user_id=${targetId} UNION ALL SELECT 1 FROM teacher_profiles WHERE user_id=${targetId} LIMIT 1`);
+      if (profile.rows.length) throw new ApiError(409, 'PROFILE_ROLE_CONFLICT', 'Academic profiles cannot be reassigned to a different role');
+    }
 
     const removesActiveAdmin = target.role === 'admin' && target.isActive && (
       input.role !== undefined && input.role !== 'admin'
