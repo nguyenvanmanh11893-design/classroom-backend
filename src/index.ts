@@ -1,52 +1,49 @@
-import AgentAPI from "apminsight"
-AgentAPI.config()
-import 'dotenv/config'
-import express from 'express'
-import cors from 'cors'
-import subjectsRoutes from './routes/subjects.js'
-import usersRoutes from './routes/users.js'
-import classesRoutes from './routes/classes.js'
-import securityMiddleware from './middleware/security.js'
-import { auth } from './lib/auth.js'
-import { toNodeHandler } from 'better-auth/node'
+import('apminsight')
+  .then(({ default: AgentAPI }) => AgentAPI.config())
+  .catch(() => console.log('APM not available in this environment'));
 
+import cors from "cors";
+import express from "express";
+import { toNodeHandler } from "better-auth/node";
 
-const app = express()
-const PORT =8000 
-if (!process.env.FRONTEND_URL) throw new Error('FRONTEND_URL is not defined in the environment variables')
+import subjectsRouter from "./routes/subjects.js";
+import usersRouter from "./routes/users.js";
+import classesRouter from "./routes/classes.js";
+import departmentsRouter from "./routes/departments.js";
+import statsRouter from "./routes/stats.js";
+import enrollmentsRouter from "./routes/enrollments.js";
 
-const allowedOrigins = process.env.FRONTEND_URL
-    .split(',')
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
-    .filter(Boolean)
+// import securityMiddleware from "./middleware/security.js";
+import { auth } from "./lib/auth.js";
 
-app.use(cors({
-    origin: (requestOrigin, callback) => {
-        if (!requestOrigin || allowedOrigins.includes(requestOrigin.replace(/\/+$/, ''))) {
-            callback(null, true)
-            return
-        }
+const app = express();
+const PORT = 8000;
 
-        callback(new Error(`Origin ${requestOrigin} is not allowed by CORS`))
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true
-}))
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL, // React app URL
+    methods: ["GET", "POST", "PUT", "DELETE"], // Specify allowed HTTP methods
+    credentials: true, // allow cookies
+  })
+);
 
-app.all('/api/auth/*splat', toNodeHandler(auth))
+app.all("/api/auth/*splat", toNodeHandler(auth));
 
-app.use(express.json())
+app.use(express.json());
 
-app.use(securityMiddleware) 
+// app.use(securityMiddleware);
 
-app.use('/api/subjects', subjectsRoutes)
-app.use('/api/users', usersRoutes)
-app.use('/api/classes', classesRoutes)
+app.use("/api/subjects", subjectsRouter);
+app.use("/api/users", usersRouter);
+app.use("/api/classes", classesRouter);
+app.use("/api/departments", departmentsRouter);
+app.use("/api/stats", statsRouter);
+app.use("/api/enrollments", enrollmentsRouter);
 
-app.get('/', (req, res) => {
-    res.send('Hello, World!')
-})
+app.get("/", (req, res) => {
+  res.send("Backend server is running!");
+});
 
 app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`)
-})
+  console.log(`Server running at http://localhost:${PORT}`);
+});
