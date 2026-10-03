@@ -29,6 +29,20 @@
       "when": 1789977299664,
       "tag": "0003_messy_vulture",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790770945738,
+      "tag": "0004_clean_freak",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790774230637,
+      "tag": "0005_condemned_epoch",
+      "breakpoints": true
     }
   ]
 }
